@@ -2,21 +2,24 @@ import numpy as np
 import cv2
 import random
 
-NUM_CLASSES = 80
-DFL_REGRESSION_SPACE = 16
-STRIDE = [8, 16, 32]
-NUM_OUTPUTS = NUM_CLASSES + DFL_REGRESSION_SPACE * 4
+from driver_base import FINNExampleOverlay
 
 
 class DetectorDriver():
 
-    def __init__(self, accel, io_shape_dict, batch_size, stride, num_classes=80, dfl_regression_space=16):
-        self.accel = accel
+    def __init__(self, bitfile_name, platform, io_shape_dict, batch_size, runtime_weight_dir, device):
+        self.accel = FINNExampleOverlay(
+            bitfile_name = bitfile_name, platform = platform,
+            io_shape_dict = io_shape_dict, batch_size = batch_size,
+            runtime_weight_dir = runtime_weight_dir, device=device
+        )
         self.io_shape_dict = io_shape_dict
         self.batch_size = batch_size
-        self.stride = stride
-        self.num_classes = num_classes
-        self.dfl_regression_space = dfl_regression_space
+        self.input_size = 320
+        self.stride = [8, 16, 32]
+        self.num_classes = 80
+        self.dfl_regression_space = 16
+        self.num_outputs = self.dfl_regression_space * 4 + self.num_classes
 
         self.muls = [np.load("Mul_{}_param0".format(i)) for i in range(io_shape_dict['num_outputs'])]
         self.adds = [np.load("Add_{}_param0".format(i)) for i in range(io_shape_dict['num_outputs'])]
@@ -24,6 +27,33 @@ class DetectorDriver():
         self.preproc_img_size = io_shape_dict['ishape_normal'][0][2]
         
         self.make_anchors()
+
+
+    def single_inference(self, img):
+        batch = [img]
+        self.preproc_and_write_accel(batch)
+        self.execute_accel(asynch=True)
+        self.wait_until_accel_finished()
+        detections = self.read_accel_and_postprocess()[0]
+        return detections
+
+
+    def visualize(self, img, detections):
+        img = img.copy()
+        detections[:, :4] = scale_coords(self.io_shape_dict['ishape_normal'][0][1:3], detections[:, :4], img.shape[:2])
+        for *xyxy, conf, cls in reversed(detections):
+            plot_one_box(xyxy, img, color=(0, 0, 255), line_thickness=1)
+        return img
+
+
+    def execute_accel(self, asynch=False):
+        self.accel.execute_on_buffers(asynch=asynch)
+
+
+    def wait_until_accel_finished(self):
+        self.accel.wait_until_finished()
+        for o in range(self.io_shape_dict['num_outputs']):
+            self.accel.copy_output_data_from_device(self.accel.obuf_packed[o], ind=o)
 
 
     def make_anchors(self, grid_cell_offset=0.5):
@@ -45,8 +75,8 @@ class DetectorDriver():
     def yolov8_postproc(self, outs, batch_size, anchor_points, strides):
 
         dfl_integration_weights = np.arange(self.dfl_regression_space).reshape(1, -1, 1, 1)
-        x_cat = np.concatenate([out.reshape(batch_size, NUM_OUTPUTS, -1) for out in outs], 2)
-        boxes_classes = np.split(x_cat, [DFL_REGRESSION_SPACE * 4], axis=1)
+        x_cat = np.concatenate([out.reshape(batch_size, self.num_outputs, -1) for out in outs], 2)
+        boxes_classes = np.split(x_cat, [self.dfl_regression_space * 4], axis=1)
         boxes, classes = boxes_classes
         classes = 1 / (1 + np.exp(-classes))
 
@@ -135,7 +165,7 @@ class DetectorDriver():
 
         preprocessed_batch = []
         for i in range(self.batch_size):
-            img = self.letterbox(batch[i], 320)
+            img = self.letterbox(batch[i], self.input_size)
             preprocessed_batch.append(np.expand_dims(img, axis=0))
         ibuf_normal = np.concatenate(preprocessed_batch, axis=0)
 

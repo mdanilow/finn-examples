@@ -65,71 +65,30 @@ io_shape_dict = {
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Execute FINN-generated accelerator on numpy inputs, or run throughput test')
-    parser.add_argument('--exec_mode', help='Please select functional verification ("execute") or throughput test ("throughput_test")', default="execute")
     parser.add_argument('--platform', help='Target platform: zynq-iodma alveo', default="alveo")
-    parser.add_argument('--batchsize', help='number of samples for inference', type=int, default=1)
     parser.add_argument('--device', help='FPGA device to be used', type=int, default=0)
     parser.add_argument('--bitfile', help='name of bitfile (i.e. "resizer.bit")', default="resizer.bit")
     parser.add_argument('--runtime_weight_dir', help='path to folder containing runtime-writable .dat weights', default="runtime_weights/")
     parser.add_argument('--sequence_dir', help='path to the folder with input images', type=str, default='img1')
-    parser.add_argument('--output_dir', help='path to a directory to visualize results with bounding boxes', type=str, default='')
+    parser.add_argument('--input', help='path to input image', type=str)
     # parse arguments
     args = parser.parse_args()
-    exec_mode = args.exec_mode
     platform = args.platform
-    batch_size = args.batchsize
     bitfile = args.bitfile
-    save_images = args.output_dir != ""
+    input_img = args.input
     runtime_weight_dir = args.runtime_weight_dir
     devID = args.device
     device = Device.devices[devID]
+    output_file = 'demo_result.jpg'
 
-    if save_images:
-        if not os.path.isdir(args.output_dir):
-            os.makedirs(args.output_dir)
-        print('Saving visualized results to', args.output_dir)
-
-    imgnames = os.listdir(args.sequence_dir)
-    imgnames.sort()
-    num_batches = int(np.floor(len(imgnames) / batch_size))
-
-    # instantiate FINN accelerator driver and pass batchsize and bitfile
     detector_driver = DetectorDriver(
         bitfile_name = bitfile, platform = platform,
-        io_shape_dict = io_shape_dict, batch_size = batch_size,
+        io_shape_dict = io_shape_dict, batch_size = 1,
         runtime_weight_dir = runtime_weight_dir, device=device
     )
 
-    prev_batch = None
-    batch = None
-    imgbatches_names = [imgnames[batch*batch_size : (batch + 1)*batch_size] for batch in range(num_batches)]
-    # additional first iter just for preproc, additional last iter just for postproc
-    num_iterations = len(imgbatches_names) + 2
-    start = time()
-    for iteration in range(num_iterations):
-
-        if iteration != 0:
-            detector_driver.execute_accel(asynch=True)
-            # postproc
-            if iteration != 1:
-                batch_detections = detector_driver.read_accel_and_postprocess()
-                if save_images:
-                    for outs_idx, detections in enumerate(batch_detections):
-                        vis_img = prev_batch[outs_idx]
-                        detections[:, :4] = scale_coords(io_shape_dict['ishape_normal'][0][1:3], detections[:, :4], vis_img.shape[:2])
-                        for *xyxy, conf, cls in reversed(detections):
-                            plot_one_box(xyxy, vis_img, color=(0, 0, 255), line_thickness=1)
-                        cv2.imwrite(join(args.output_dir, 'result{:03d}.jpg'.format((iteration - 2)*batch_size + outs_idx)), vis_img)
-        
-        # preproc
-        if save_images:
-            prev_batch = batch  # save for visualization
-        if iteration < num_iterations - 2:
-            batch = [cv2.imread(join(args.sequence_dir, path)) for path in imgbatches_names[iteration]]
-            detector_driver.preproc_and_write_accel(batch)
-            
-        if iteration != 0:
-            detector_driver.wait_until_accel_finished()
-            
-    processing_time = time() - start
-    print('fps:', (batch_size * num_batches) / processing_time)
+    img = cv2.imread(input_img)
+    detections = detector_driver.single_inference(img)       
+    visualized_img = detector_driver.visualize(img, detections)
+    cv2.imwrite(output_file, visualized_img)
+    print('Result saved as', output_file)
