@@ -5,6 +5,17 @@ import random
 from driver_base import FINNExampleOverlay
 
 
+COCO_LABELS = [ 'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light',
+         'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
+         'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+         'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard',
+         'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+         'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+         'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone',
+         'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
+         'hair drier', 'toothbrush' ]
+
+
 class DetectorDriver():
 
     def __init__(self, bitfile_name, platform, io_shape_dict, batch_size, runtime_weight_dir, device):
@@ -29,12 +40,12 @@ class DetectorDriver():
         self.make_anchors()
 
 
-    def single_inference(self, img):
+    def single_inference(self, img, conf_thres=0.2):
         batch = [img]
         self.preproc_and_write_accel(batch)
         self.execute_accel(asynch=True)
         self.wait_until_accel_finished()
-        detections = self.read_accel_and_postprocess()[0]
+        detections = self.read_accel_and_postprocess(conf_thres=conf_thres)[0]
         return detections
 
 
@@ -42,7 +53,8 @@ class DetectorDriver():
         img = img.copy()
         detections[:, :4] = scale_coords(self.io_shape_dict['ishape_normal'][0][1:3], detections[:, :4], img.shape[:2])
         for *xyxy, conf, cls in reversed(detections):
-            plot_one_box(xyxy, img, color=(0, 0, 255), line_thickness=1)
+            label = COCO_LABELS[int(cls)] + " {:.2f}".format(conf)
+            plot_one_box(xyxy, img, label=label, color=(0, 0, 255), line_thickness=1)
         return img
 
 
@@ -72,7 +84,7 @@ class DetectorDriver():
         self.strides_tensor = np.concatenate(stride_tensor)
 
 
-    def yolov8_postproc(self, outs, batch_size, anchor_points, strides):
+    def yolov8_postproc(self, outs, batch_size, anchor_points, strides, conf_thres=0.2):
 
         dfl_integration_weights = np.arange(self.dfl_regression_space).reshape(1, -1, 1, 1)
         x_cat = np.concatenate([out.reshape(batch_size, self.num_outputs, -1) for out in outs], 2)
@@ -100,12 +112,12 @@ class DetectorDriver():
         pred = np.concatenate((boxes, classes), 1)
 
         # nms
-        pred = self.V8_non_max_suppression(pred)
+        pred = self.V8_non_max_suppression(pred, conf_thres=conf_thres)
         
         return pred
 
 
-    def read_accel_and_postprocess(self):
+    def read_accel_and_postprocess(self, conf_thres=0.2):
 
         for o in range(self.io_shape_dict['num_outputs']):
             # np.save(outputfile[o], obuf)
@@ -120,7 +132,7 @@ class DetectorDriver():
         
         batch_detections = []
         for outs_idx, outs in enumerate(self.outputs):
-            batch_detections.append(self.yolov8_postproc(outs, 1, self.anchor_points, self.strides_tensor)[0])
+            batch_detections.append(self.yolov8_postproc(outs, 1, self.anchor_points, self.strides_tensor, conf_thres=conf_thres)[0])
 
         return batch_detections
 
