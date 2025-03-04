@@ -71,6 +71,7 @@ if __name__ == "__main__":
     parser.add_argument('--runtime_weight_dir', help='path to folder containing runtime-writable .dat weights', default="runtime_weights/")
     parser.add_argument('--sequence_dir', help='path to the folder with input images', type=str, default='img1')
     parser.add_argument('--input', help='path to input image', type=str)
+    parser.add_argument('--conf_thres', help='confidence threshold', type=float, default=0.3)
     # parse arguments
     args = parser.parse_args()
     platform = args.platform
@@ -88,7 +89,7 @@ if __name__ == "__main__":
     )
 
     img = cv2.imread(input_img)
-    detections = detector_driver.single_inference(img)       
+    detections = detector_driver.single_inference(img, conf_thres=args.conf_thres)       
     visualized_img = detector_driver.visualize(img, detections)
     cv2.imwrite(output_file, visualized_img)
     print('Result saved as', output_file)
