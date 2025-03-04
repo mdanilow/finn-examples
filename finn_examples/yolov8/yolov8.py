@@ -26,7 +26,6 @@ class DetectorDriver():
         )
         self.io_shape_dict = io_shape_dict
         self.batch_size = batch_size
-        self.input_size = 320
         self.stride = [8, 16, 32]
         self.num_classes = 80
         self.dfl_regression_space = 16
@@ -137,7 +136,7 @@ class DetectorDriver():
         return batch_detections
 
 
-    def letterbox(self, img, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True):
+    def letterbox(self, img, new_shape=(640, 640), color=(114, 114, 114), auto=False, scaleFill=False, scaleup=True):
         # Resize and pad image while meeting stride-multiple constraints
         stride = max(self.stride)
         shape = img.shape[:2]  # current shape [height, width]
@@ -177,7 +176,7 @@ class DetectorDriver():
 
         preprocessed_batch = []
         for i in range(self.batch_size):
-            img = self.letterbox(batch[i], self.input_size)
+            img = self.letterbox(batch[i], self.io_shape_dict['ishape_normal'][0][1:3])
             preprocessed_batch.append(np.expand_dims(img, axis=0))
         ibuf_normal = np.concatenate(preprocessed_batch, axis=0)
 
